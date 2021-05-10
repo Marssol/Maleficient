@@ -1,0 +1,275 @@
+module TYPES with ==, !=, get, set is
+
+------------------------------------------------------------------------
+-- Types
+------------------------------------------------------------------------
+
+type Value_Binding is
+   Value_binding (pid: Nat, value: Nat)
+end type
+
+------------------------------------------------------------------------
+
+type PHI_Owner is
+   PHI (pid: Nat, owner: Nat)
+end type
+
+------------------------------------------------------------------------
+
+type Value_Bindings is
+   list of Value_Binding
+with head, tail
+end type
+
+------------------------------------------------------------------------
+
+type PHI_Owners is
+   list of PHI_Owner
+with head, tail, length
+end type
+
+------------------------------------------------------------------------
+
+type Nats is
+   list of Nat
+with head, tail, length, element, member
+end type
+
+------------------------------------------------------------------------
+
+type Bools is
+   list of Bool
+with head, tail, length, element, member
+end type
+
+------------------------------------------------------------------------
+
+type Access_permission is
+   AP (aid: Nat, sid: Nat)
+end type
+
+------------------------------------------------------------------------
+
+type Access_permissions is
+   list of Access_permission
+with head, tail, length, element, member, delete
+end type
+
+------------------------------------------------------------------------
+
+type Ids is
+   SUBJECT,
+   SENDER,
+   RECEIVER,
+   PID,
+   TIME,
+   NAME,
+   ACTION,
+   PVALUE,
+   PERMISSION,
+   A1,
+   A2
+end type
+------------------------------------------------------------------------
+
+type Actions is
+   COLLECT, UPDATE, REQUEST_ACCESS, AUTHORIZE, ACCESS, ACCESS_PATIENT,
+   REVOKE, REQUEST_CONSENT, PATIENT_CONSENT, DISCLOSE, ERASE
+end type
+
+------------------------------------------------------------------------
+type Ids_value is
+  Ids_of (I: Ids, A: Actions),
+  Ids_of (I: Ids, V: Nat)
+end type
+
+
+------------------------------------------------------------------------
+-- Functions
+------------------------------------------------------------------------
+
+function add_value_binding (pid: Nat, value: Nat, u: Value_Bindings)
+: Value_Bindings is
+  if is_already_binded (u, pid, value) then 
+    return u
+  else
+    return cons (Value_binding (pid, value), u)
+  end if
+end function
+
+------------------------------------------------------------------------
+
+function is_already_binded (in var U: Value_Bindings, p: Nat, v: Nat)
+: Bool is
+  loop
+    if U == {} then
+      return false
+    else
+      if ((head(U).pid == p) and (head(U).value == v)) then
+        return true
+      end if;
+      U := tail(U)    
+    end if
+  end loop
+end function
+
+------------------------------------------------------------------------
+
+function delete_value_binding (in var U: Value_Bindings, p: Nat, v: Nat)
+: Value_Bindings is
+   var new_v: Value_Bindings in
+      new_v := {};
+      loop
+         if U == {} then
+            return new_v
+         else
+            if (not (head(U).pid == p) or not (head(U).value == v)) then
+               new_v := add_value_binding (head(U).pid, head(U).value, new_v)
+            end if;
+            U := tail(U)    
+         end if
+      end loop
+   end var
+end function
+
+------------------------------------------------------------------------
+
+function pid_values (in var U: Value_Bindings, p: Nat)
+: Nats is
+   var new_l: Nats in
+      new_l := {};
+      loop
+         if U == {} then
+            return new_l
+         else
+            if (head(U).pid == p) then
+               new_l := cons (head(U).value, new_l)
+            end if;
+            U := tail(U)    
+         end if
+      end loop
+  end var
+end function
+
+------------------------------------------------------------------------
+
+function add_phi_owner (pid: Nat, owner: Nat, u: PHI_Owners)
+: PHI_Owners is
+  if exists_owner (u, owner) then 
+    return u
+  else
+    return cons (PHI (pid, owner), u)
+  end if
+end function
+
+------------------------------------------------------------------------
+
+function exists_owner (in var U: PHI_Owners, o: Nat)
+: Bool is
+  loop
+    if U == {} then
+      return false
+    else
+      if (head(U).owner == o) then
+        return true
+      end if;
+      U := tail(U)    
+    end if
+  end loop
+end function
+
+------------------------------------------------------------------------
+
+function get_owner_pid (in var U: PHI_Owners, o: Nat)
+: Nats is
+   var new_l: Nats in
+      new_l := {};
+      loop
+         if U == {} then
+            return new_l
+         else
+            if (head(U).owner == o) then
+               new_l := cons (head(U).pid, new_l)
+            end if;
+            U := tail(U)    
+         end if
+      end loop
+  end var
+end function
+
+------------------------------------------------------------------------
+
+function get_request_by_patient (in var U: Access_permissions, s: Nat)
+: Nats is
+  var requesters: Nats in 
+  requesters := {};
+  loop
+    if U == {} then
+      return requesters
+    else
+      if (head(U).sid == s) then
+        requesters := cons (head(U).aid, requesters)
+      end if;
+      U := tail(U)    
+    end if
+  end loop
+  end var
+end function
+
+------------------------------------------------------------------------
+
+function get_request_by_doctor (in var U: Access_permissions, a: Nat)
+: Nats is
+  var requesters: Nats in 
+  requesters := {};
+  loop
+    if U == {} then
+      return requesters
+    else
+      if (head(U).aid == a) then
+        requesters := cons (head(U).sid, requesters)
+      end if;
+      U := tail(U)    
+    end if
+  end loop
+  end var
+end function
+
+------------------------------------------------------------------------
+
+function delete_nats (in var U: Nats, p: Nat)
+: Nats is
+   var new_v: Nats in
+      new_v := {};
+      loop
+         if U == {} then
+            return new_v
+         else
+            if (not (head(U) == p)) then
+               new_v := cons (head(U), new_v)
+            end if;
+            U := tail(U)    
+         end if
+      end loop
+   end var
+end function
+
+
+------------------------------------------------------------------------
+-- Channel
+------------------------------------------------------------------------------------------------------------------------------------------------
+
+channel F is (Nat, Nat, Nat, Nat) end channel 
+channel T is (Nat, Nat, Nat) end channel 
+channel D is (Nat, Nat) end channel 
+channel O is (Nat) end channel
+
+-- Types for system mapping (annotation)
+channel FD is (Ids_value, Ids_value, Ids_value, Ids_value, Ids_value) end channel
+channel TD is (Ids_value, Ids_value, Ids_value, Ids_value) end channel
+channel DD is (Ids_value, Ids_value, Ids_value) end channel
+channel OD is (Ids_value, Ids_value) end channel
+
+------------------------------------------------------------------------
+
+end module

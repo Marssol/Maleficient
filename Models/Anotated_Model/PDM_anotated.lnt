@@ -1,0 +1,301 @@
+module PDM_anotated (TYPES) is
+
+process MAIN [ACCESS_DATA: T, ACCESS_DOCTOR: T, APPROVE_REQUEST: D,
+              CONSENT: O, DISCLOSE: F, ERASE: D, REQUEST_ACCESS: D, 
+              REJECT_REQUEST : D, REVOKE: D, SUBMIT_DATA: T,
+              -- Annotated channels
+              ACCESSED: TD, ACCESSED_PATIENT: TD, AUTHORIZED: TD, 
+              DISCLOSED: FD, ERASED: DD, PATIENT_CONSENTED: OD, 
+              PROVIDED: TD, REVOKED: DD, UPDATED: TD] is
+              
+var p, c_patient, nb_patients, c_doctor, nb_doctors, nb_value, nb_pid: Nat, 
+	vb_cloud: Value_Bindings, own_cloud: PHI_Owners,
+	trash_cloud: Nats, nb_max_pid_per_patient, nb_maximum_actions: Nat,
+	nb_actions: Nat, is_patient: Bool,
+	pending_request, approved_request: Access_permissions in
+  
+	-- parameters
+	nb_patients := 2;
+	nb_doctors := 2;
+	nb_value := 2;
+	nb_pid := 4;
+	nb_maximum_actions := 12;
+	nb_max_pid_per_patient := 2;
+	
+	-- initialisation
+	p := 0;
+	nb_actions := 0;
+	vb_cloud := {};
+	own_cloud := {};
+	trash_cloud := {};
+	pending_request := {};
+	approved_request := {};
+  
+	loop
+		-- non-deterministic selection of the user (patients/doctor)
+		if (nb_actions >= nb_maximum_actions) then
+			loop i end loop
+		end if; 
+		is_patient := any Bool;
+		if is_patient then  
+			(************************ PATIENT  ***********************)
+			c_patient := any Nat where c_patient < nb_patients;
+			select
+				(*********** SUBMIT DATA *)
+				var value: Nat, pids: Nats, processed: Bool in
+					value := any Nat where value < nb_value;
+					processed := false;
+					pids := get_owner_pid (own_cloud, c_patient);
+					select
+						if (p < nb_pid) and (length(pids) < nb_max_pid_per_patient) then
+							if not (exists_owner (own_cloud, c_patient)) then
+								CONSENT (c_patient);
+								-- annotation nb_1
+								PATIENT_CONSENTED (Ids_of (ACTION, PATIENT_CONSENT),
+												   Ids_of (SUBJECT, c_patient))
+							end if;
+							SUBMIT_DATA (c_patient, p, value);
+							-- annotation nb_2
+							PROVIDED (Ids_of (ACTION, COLLECT),
+									  Ids_of (SUBJECT, c_patient), 
+									  Ids_of (PID, p), Ids_of (PVALUE, value));
+							own_cloud := add_phi_owner (p, c_patient, own_cloud);
+							p := p + 1;
+							processed := true
+						end if
+					[]
+						var tp, ind: Nat in
+							if pids != {} then
+								ind := any Nat where ind < length (pids);
+								tp := element (pids, (ind + 1));
+								if not (member (tp, trash_cloud)) then
+									SUBMIT_DATA (c_patient, tp, value);
+									-- annotation nb_3
+									UPDATED (Ids_of (ACTION, UPDATE),
+											 Ids_of (SUBJECT, c_patient), 
+											 Ids_of (PID, tp),
+											 Ids_of (PVALUE, value));
+									processed := true
+								end if
+							end if
+						end var
+					end select; 
+					if processed then
+						vb_cloud := add_value_binding (p, value, vb_cloud);
+						nb_actions := nb_actions + 1
+					end if
+				end var
+				(************* *)
+			[]
+				(*********** ERASE including get_out *)
+				var get_out: Bool in
+					get_out := any Bool;
+					var pids: Nats, tp, ind: Nat in
+						pids := get_owner_pid (own_cloud, c_patient);
+						loop L in
+							if pids != {} then
+								ind := any Nat where ind < length (pids);
+								tp := element (pids, (ind + 1));
+								if not (member (tp, trash_cloud)) then
+									ERASE (c_patient, tp);
+									-- annotation nb_4
+									ERASED (Ids_of (ACTION, ERASE),
+									        Ids_of (SUBJECT, c_patient), 
+									        Ids_of (PID, tp));
+									nb_actions := nb_actions + 1;
+									trash_cloud := cons (tp, trash_cloud);
+									pids := delete_nats (pids, tp)
+								end if;
+								if not (get_out) then break L end if
+							else 
+								break L
+							end if
+						end loop
+					end var
+				end var
+				(************* *)
+			[]
+				(*********** ACCESS_DATA including via dashboard *)
+				var pids, values: Nats, tp, tval, ind, latest: Nat in
+					pids := get_owner_pid (own_cloud, c_patient);
+					select
+						ind := any Nat where ind < length (pids);
+						pids := cons (ind, {})
+					[]
+						pids := pids
+					end select;
+					if pids != {} then
+						latest := length (pids);
+						tp := element (pids, latest);
+						loop L in
+							if (member (tp, trash_cloud)) then
+								latest := latest - 1;
+								if latest == 0 then break L end if;
+								tp := element (pids, latest)
+							else 
+								break L
+							end if
+						end loop;
+						if (latest > 0) then
+							values := pid_values (vb_cloud, tp);
+							if values != {} then
+								tval := head (values);
+								ACCESS_DATA (c_patient, tp, tval);
+								-- annotation nb_5
+								ACCESSED_PATIENT 
+										(Ids_of (ACTION, ACCESS_PATIENT),
+										 Ids_of (SUBJECT, c_patient), 
+										 Ids_of (PID, tp),
+										 Ids_of (PVALUE, tval));
+								nb_actions := nb_actions + 1
+							end if
+						end if 
+					end if
+				end var
+				(************* *)
+			[]
+				(*********** APPROVE and REFUSE _REQUEST *)
+				only if (pending_request != {}) then
+					var requesters: Nats in
+						requesters := get_request_by_patient (pending_request,
+															  c_patient);
+					   if requesters != {} then
+							var ind, aid: Nat, pids: Nats in
+								ind := any Nat where ind < length (requesters);
+								aid := element (requesters, (ind + 1));
+								pids := get_owner_pid (own_cloud, c_patient);
+								if pids != {} then
+									select
+										APPROVE_REQUEST (aid, c_patient);
+										-- annotation nb_6
+										loop L in
+											if pids == {} then break L end if;
+											AUTHORIZED (Ids_of (ACTION, AUTHORIZE),
+													  Ids_of (PID, head (pids)),
+													  Ids_of (PERMISSION, 1 of Nat),  
+													  Ids_of (A1, aid));
+											AUTHORIZED (Ids_of (ACTION, AUTHORIZE),
+													  Ids_of (PID, head (pids)),
+													  Ids_of (PERMISSION, 2 of Nat),   
+													  Ids_of (A1, aid));
+											pids := tail (pids)
+										end loop;
+										approved_request := 
+												cons (AP (aid, c_patient),
+														approved_request)
+									[]
+										REJECT_REQUEST (aid, c_patient)
+									end select;
+									nb_actions := nb_actions + 1;
+									pending_request := delete (AP (aid, c_patient),
+														 pending_request)
+								end if
+							end var
+						end if
+					end var
+				end if
+				(************* *)
+			[]
+				
+				(*********** REVOKE *)
+				only if (approved_request != {}) then
+				var requesters: Nats in
+					requesters := get_request_by_patient (approved_request,
+														  c_patient);
+				   if requesters != {} then
+					 var ind, aid: Nat, pids: Nats in
+						ind := any Nat where ind < length (requesters);
+						aid := element (requesters, (ind + 1));
+						pids := get_owner_pid (own_cloud, c_patient);
+						if pids != {} then
+							REVOKE (aid, c_patient);
+							-- annotation nb_7
+							loop L in
+								if pids == {} then break L end if;
+								REVOKED (Ids_of (ACTION, REVOKE),
+									     Ids_of (A1, aid), 
+									     Ids_of (PID, head (pids)));
+								pids := tail (pids)
+							end loop;
+							nb_actions := nb_actions + 1;
+							approved_request := delete (AP (aid, c_patient),
+													approved_request)
+						end if
+					 end var
+				   end if
+				 end var
+				end if
+				(************* *)
+			end select
+		else (************************ DOCTOR **************************)
+			c_doctor := any Nat where c_doctor < nb_doctors;
+			select
+				(*********** REQUEST_ACCESS *)
+				var sid: Nat in
+				 sid := any Nat where sid < nb_patients;
+				 if not (member (AP (c_doctor, sid), pending_request))
+					and not (member (AP (c_doctor, sid), approved_request)) then
+					REQUEST_ACCESS (c_doctor, sid);
+					nb_actions := nb_actions + 1;
+					pending_request := cons (AP (c_doctor, sid), pending_request)
+				 end if
+				end var
+				(************* *)
+			[]
+				(*********** ACCESS and DISCLOSE, dashboard included *)
+				var sids, pids: Nats, ind, ind_pid, sid, tp, tval: Nat in
+					sids := get_request_by_doctor (approved_request, c_doctor);
+					if sids != {} then
+						ind := any Nat where ind < length (sids);
+						sid := element (sids, (ind + 1));
+						pids := get_owner_pid (own_cloud, sid);
+						if pids != {} then
+							ind_pid := any Nat where ind_pid < length (pids);
+							tp := element (pids, (ind_pid + 1));
+							if not (member (tp, trash_cloud)) then
+								var values: Nats in
+									values := pid_values (vb_cloud, tp);
+									if values != {} then
+										tval := head (values);
+										select
+											ACCESS_DOCTOR (c_doctor, tp, tval);
+											-- annotation nb_8
+											ACCESSED (Ids_of (ACTION, ACCESS),
+													  Ids_of (A1, c_doctor), 
+													  Ids_of (PID, tp),
+													  Ids_of (PVALUE, tval));
+											nb_actions := nb_actions + 1
+										[]
+											var requesters: Nats in
+												requesters := get_request_by_patient (approved_request,sid);
+												if requesters != {} then
+													var ind, aid: Nat in
+														ind := any Nat where ind < length (requesters);
+														aid := element (requesters, (ind + 1));
+														DISCLOSE (c_doctor, tp, tval, aid);
+														-- annotation nb_9
+														DISCLOSED 
+															(Ids_of (ACTION, DISCLOSE),
+															 Ids_of (A1, c_doctor), 
+															 Ids_of (PID, tp),
+															 Ids_of (PVALUE, tval),
+															 Ids_of (A2, aid));
+														nb_actions := nb_actions + 1
+													end var
+												end if
+											end var
+										end select
+									end if
+								end var
+							end if
+						end if
+					end if
+				end var
+				(************* *)
+			end select
+		end if
+	end loop
+end var
+end process
+
+end module
