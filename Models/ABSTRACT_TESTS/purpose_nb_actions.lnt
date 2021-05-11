@@ -1,0 +1,13 @@
+module purpose_nb_actions (TYPES) is
+
+process MAIN [END_SCENARIO: none, NB_T_ACTION: O, TESTOR_ACCEPT: none] is   
+   select 
+      NB_T_ACTION (4 of Nat)
+   []
+      NB_T_ACTION (3 of Nat)
+   end select;
+   END_SCENARIO;
+   loop TESTOR_ACCEPT end loop
+end process
+
+end module
